@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jump King Race: P2P Multiplayer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            font-family: 'Press Start 2P', cursive;
+            background-color: #1a202c;
+            color: white;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            border: 4px solid #4a5568;
+            background: linear-gradient(to bottom, #1a202c, #2d3748);
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        button {
+            font-family: 'Press Start 2P', cursive;
+            background: #48bb78;
+            border: none;
+            color: #1a202c;
+            padding: 15px 20px;
+            margin: 5px;
+            cursor: pointer;
+            transition: all 0.1s;
+            text-transform: uppercase;
+            box-shadow: 0 4px 0 #2f855a;
+        }
+
+        button:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #2f855a;
+        }
+
+        input {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        #status-hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 10px;
+            z-index: 20;
+            text-align: left;
+        }
+
+        #timer-hud {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            padding: 15px 25px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 20;
+            text-align: center;
+            border: 2px solid #ecc94b;
+        }
+
+        #timer-display {
+            font-size: 20px;
+            color: #ecc94b;
+            margin-bottom: 5px;
+        }
+
+        #height-stats {
+            font-size: 8px;
+            color: #a0aec0;
+        }
+
+        #charge-bar-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 20px;
+            background: #2d3748;
+            border: 2px solid white;
+            display: none;
+        }
+
+        #charge-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: #e53e3e;
+            transition: width 0.05s linear;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI: Main Menu -->
+    <div id="menu-overlay" class="overlay">
+        <h1 class="text-3xl text-yellow-400 mb-8 text-center" style="line-height: 1.5;">TOWER RACE<br><span class="text-sm text-white">P2P Multiplayer</span></h1>
+        
+        <div id="auth-loading" class="text-sm animate-pulse mb-4">Initializing P2P...</div>
+
+        <div id="menu-buttons" class="flex flex-col items-center hidden w-full max-w-sm px-4">
+            <button onclick="createGame()" class="mb-4 w-full py-4 text-sm">Host Game</button>
+            
+            <div class="w-full bg-gray-800 rounded p-4 border-2 border-gray-600 mb-4">
+                <h3 class="text-yellow-400 text-xs mb-3">JOIN FRIEND</h3>
+                <input 
+                    id="join-code-input" 
+                    type="text" 
+                    placeholder="Enter Room Code"
+                    class="w-full p-3 bg-gray-900 border-2 border-gray-600 text-white text-xs font-mono mb-2"
+                    maxlength="50"
+                />
+                <button onclick="joinGameByCode()" class="w-full text-xs py-3">Join Game</button>
+            </div>
+            
+            <p id="error-msg" class="text-red-500 text-xs h-4"></p>
+        </div>
+        
+        <div class="absolute bottom-4 text-xs text-gray-600">
+            Peer ID: <span id="debug-peer-id">...</span>
+        </div>
+    </div>
+
+    <!-- UI: Waiting Room -->
+    <div id="lobby-overlay" class="overlay hidden">
+        <h2 class="text-xl mb-4 text-yellow-400">Lobby Created</h2>
+        <div class="text-sm text-gray-300 mb-4">Share this code with your friend:</div>
+        
+        <div class="bg-gray-900 px-4 py-4 rounded border-2 border-yellow-400 mb-4 max-w-md">
+            <div id="room-code" class="text-sm font-bold text-yellow-400 break-all">------</div>
+        </div>
+        
+        <button onclick="copyRoomCode()" class="mb-4 text-xs px-4 py-2">📋 Copy Code</button>
+        
+        <div class="text-xs text-gray-500 mb-8">Waiting for opponent to join...</div>
+        <div class="animate-bounce text-4xl mb-8">⏳</div>
+        
+        <button class="bg-red-600 mt-8" onclick="resetGame()">Cancel</button>
+    </div>
+
+    <!-- UI: Win/Loss -->
+    <div id="result-overlay" class="overlay hidden">
+        <h1 id="result-title" class="text-4xl mb-4">VICTORY</h1>
+        <p id="result-subtitle" class="text-sm text-gray-300 mb-8">You reached the top!</p>
+        <button onclick="resetGame()">Main Menu</button>
+    </div>
+
+    <!-- HUD -->
+    <div id="status-hud" class="hidden">
+        <p>Connection: <span id="hud-conn">Direct P2P</span></p>
+        <p>Opponent: <span id="hud-opp">Waiting</span></p>
+        <p>Latency: <span id="hud-latency">-- ms</span></p>
+    </div>
+
+    <!-- Timer HUD -->
+    <div id="timer-hud" class="hidden">
+        <div id="timer-display">3:00</div>
+        <div id="height-stats">
+            <div>You: <span id="your-height">0m</span></div>
+            <div>Opponent: <span id="opp-height">0m</span></div>
+        </div>
+    </div>
+
+    <!-- Charge Bar -->
+    <div id="charge-bar-container">
+        <div id="charge-bar-fill"></div>
+    </div>
+</div>
+
+<script>
+    // --- P2P Globals ---
+    let peer = null;
+    let connection = null;
+    let playerRole = null; // 'host' or 'guest'
+    let roomCode = null;
+    
+    // Canvas & Context
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game Constants
+    const CANVAS_WIDTH = 400;
+    const CANVAS_HEIGHT = 600;
+    const GRAVITY = 0.4;
+    const FRICTION = 0.8;
+    const MAX_CHARGE = 100;
+    
+    // Game State
+    let gameState = 'MENU'; 
+    let cameraY = 0;
+
+    // Inputs
+    const keys = {
+        ArrowLeft: false,
+        ArrowRight: false,
+        KeyA: false,
+        KeyD: false,
+        Space: false
+    };
+
+    // Level Data - SEEDED for consistency
+    const PLATFORM_HEIGHT = 15;
+    const LEVEL_HEIGHT = 3000;
+    const LEVEL_SEED = 12345;
+    
+    function seededRandom(seed) {
+        let x = Math.sin(seed++) * 10000;
+        return x - Math.floor(x);
+    }
+    
+    const platforms = [
+        { x: 0, y: CANVAS_HEIGHT - 20, w: CANVAS_WIDTH, h: 20 },
+    ];
+    let seedCounter = LEVEL_SEED;
+    let currentY = CANVAS_HEIGHT - 100;
+    while (currentY > -LEVEL_HEIGHT) {
+        let count = seededRandom(seedCounter++) > 0.7 ? 2 : 1;
+        for(let i=0; i<count; i++) {
+            const w = 60 + seededRandom(seedCounter++) * 60;
+            const x = seededRandom(seedCounter++) * (CANVAS_WIDTH - w);
+            platforms.push({ x, y: currentY, w, h: PLATFORM_HEIGHT });
+        }
+        currentY -= (70 + seededRandom(seedCounter++) * 50); 
+    }
+    const goal = { x: CANVAS_WIDTH/2 - 20, y: -LEVEL_HEIGHT - 50, w: 40, h: 40 };
+
+    // Player Factory
+    function createPlayer(color) {
+        return {
+            x: 50,
+            y: CANVAS_HEIGHT - 60,
+            w: 30,
+            h: 30,
+            vx: 0,
+            vy: 0,
+            color: color,
+            grounded: false,
+            charging: false,
+            charge: 0,
+            facingRight: true,
+            finished: false
+        };
+    }
+
+    let localPlayer = createPlayer('#48bb78'); 
+    let opponentPlayer = createPlayer('#f56565');
+    
+    // Game timer
+    const GAME_DURATION = 180; // 3 minutes in seconds
+    let gameStartTime = 0;
+    let timeRemaining = GAME_DURATION;
+    let highestReached = 0;
+    let opponentHighestReached = 0; 
+    
+    // --- P2P Init ---
+    function initPeer() {
+        peer = new Peer({
+            config: {
+                'iceServers': [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    // Free TURN servers (relay fallback for strict NAT)
+                    {
+                        urls: 'turn:openrelay.metered.ca:80',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    },
+                    {
+                        urls: 'turn:openrelay.metered.ca:443',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    }
+                ]
+            },
+            debug: 2 // Enable debug logging
+        });
+
+        peer.on('open', (id) => {
+            roomCode = id;
+            document.getElementById('debug-peer-id').innerText = id.substring(0, 8) + '...';
+            document.getElementById('auth-loading').classList.add('hidden');
+            document.getElementById('menu-buttons').classList.remove('hidden');
+        });
+
+        peer.on('error', (err) => {
+            console.error('Peer error:', err);
+            showError('Connection error');
+        });
+
+        peer.on('connection', (conn) => {
+            if (playerRole === 'host' && !connection) {
+                connection = conn;
+                setupConnection();
+            }
+        });
+    }
+
+    initPeer();
+
+    function resize() {
+        const scale = Math.min(window.innerWidth / CANVAS_WIDTH, window.innerHeight / CANVAS_HEIGHT);
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        canvas.style.width = `${CANVAS_WIDTH * scale}px`;
+        canvas.style.height = `${CANVAS_HEIGHT * scale}px`;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- P2P Connection Logic ---
+
+    function setupConnection() {
+        connection.on('open', () => {
+            document.getElementById('hud-opp').innerText = "Connected";
+            
+            if (playerRole === 'host') {
+                // Send ready signal to guest
+                connection.send({ type: 'ready' });
+                setTimeout(() => startPlaying(), 1000);
+            } else if (playerRole === 'guest') {
+                // Guest hides loading when connection opens
+                document.getElementById('auth-loading').classList.add('hidden');
+                document.getElementById('menu-overlay').classList.add('hidden');
+            }
+        });
+
+        connection.on('data', (data) => {
+            if (data.type === 'position') {
+                opponentPlayer.x = lerp(opponentPlayer.x, data.x, 0.5);
+                opponentPlayer.y = lerp(opponentPlayer.y, data.y, 0.5);
+                opponentPlayer.finished = data.f;
+                opponentHighestReached = data.h || 0;
+                
+                // Calculate latency
+                if (data.t) {
+                    const latency = Date.now() - data.t;
+                    document.getElementById('hud-latency').innerText = `${latency} ms`;
+                }
+            } else if (data.type === 'ready') {
+                // Host tells guest it's ready
+                if (playerRole === 'guest') {
+                    setTimeout(() => startPlaying(), 500);
+                }
+            } else if (data.type === 'start') {
+                // Guest tells host to start (legacy)
+                if (playerRole === 'host') {
+                    // Already handled in setupConnection
+                }
+            } else if (data.type === 'win') {
+                handleOpponentWin();
+            }
+        });
+
+        connection.on('close', () => {
+            showError('Opponent disconnected');
+            setTimeout(() => resetGame(), 2000);
+        });
+    }
+
+    // Create Game (Host)
+    window.createGame = () => {
+        if (!peer) return;
+        
+        playerRole = 'host';
+        document.getElementById('room-code').innerText = roomCode;
+        showLobbyWaitScreen();
+    };
+
+    // Copy room code to clipboard
+    window.copyRoomCode = () => {
+        navigator.clipboard.writeText(roomCode).then(() => {
+            const btn = event.target;
+            const original = btn.innerText;
+            btn.innerText = '✓ Copied!';
+            setTimeout(() => btn.innerText = original, 2000);
+        }).catch(() => {
+            showError('Failed to copy');
+        });
+    };
+
+    // Join Game by Code
+    window.joinGameByCode = () => {
+        const input = document.getElementById('join-code-input');
+        const code = input.value.trim();
+        
+        if (!code) {
+            showError('Enter a room code');
+            return;
+        }
+
+        joinGame(code);
+    };
+
+    // Join Game (Guest)
+    function joinGame(hostId) {
+        if (!peer) return;
+        
+        playerRole = 'guest';
+        localPlayer.x = 320;
+        
+        hideOverlays();
+        document.getElementById('auth-loading').innerText = 'Connecting to host...';
+        document.getElementById('auth-loading').classList.remove('hidden');
+        document.getElementById('menu-overlay').classList.remove('hidden');
+        
+        connection = peer.connect(hostId, {
+            reliable: true,
+            serialization: 'json'
+        });
+        
+        let connectionTimeout = setTimeout(() => {
+            if (connection && connection.open === false) {
+                connection.close();
+                showError('Connection timeout. Check room code.');
+                document.getElementById('auth-loading').classList.add('hidden');
+                document.getElementById('menu-buttons').classList.remove('hidden');
+            }
+        }, 15000);
+        
+        connection.on('open', () => {
+            clearTimeout(connectionTimeout);
+            console.log('Connection established as guest');
+            setupConnection();
+            // Wait for host's ready signal
+        });
+
+        connection.on('error', (err) => {
+            clearTimeout(connectionTimeout);
+            console.error('Connection error:', err);
+            showError('Failed to connect. NAT/Firewall issue?');
+            document.getElementById('auth-loading').innerText = 'Initializing P2P...';
+            document.getElementById('auth-loading').classList.add('hidden');
+            document.getElementById('menu-buttons').classList.remove('hidden');
+        });
+    }
+
+    function startPlaying() {
+        gameState = 'PLAYING';
+        gameStartTime = Date.now();
+        timeRemaining = GAME_DURATION;
+        highestReached = 0;
+        opponentHighestReached = 0;
+        
+        hideOverlays();
+        document.getElementById('status-hud').classList.remove('hidden');
+        document.getElementById('timer-hud').classList.remove('hidden');
+        document.getElementById('charge-bar-container').style.display = 'block';
+        gameLoop();
+    }
+    
+    // Real-time P2P sync
+    let lastSync = 0;
+    function syncPosition() {
+        if (!connection || gameState !== 'PLAYING') return;
+        
+        const now = Date.now();
+        if (now - lastSync < 50) return;
+        lastSync = now;
+
+        const data = {
+            type: 'position',
+            x: Math.round(localPlayer.x),
+            y: Math.round(localPlayer.y),
+            f: localPlayer.finished,
+            h: highestReached,
+            t: now
+        };
+
+        try {
+            connection.send(data);
+        } catch(e) {
+            console.error('Send failed:', e);
+        }
+    }
+
+    function update(dt) {
+        if (gameState !== 'PLAYING') return;
+
+        // Update timer
+        const elapsed = (Date.now() - gameStartTime) / 1000;
+        timeRemaining = Math.max(0, GAME_DURATION - elapsed);
+        
+        const minutes = Math.floor(timeRemaining / 60);
+        const seconds = Math.floor(timeRemaining % 60);
+        document.getElementById('timer-display').innerText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+        // Time's up!
+        if (timeRemaining <= 0 && gameState === 'PLAYING') {
+            gameState = 'ENDED';
+            if (highestReached > opponentHighestReached) {
+                endGame('VICTORY', `You: ${highestReached}m vs Opponent: ${opponentHighestReached}m`);
+            } else if (highestReached < opponentHighestReached) {
+                endGame('DEFEAT', `You: ${highestReached}m vs Opponent: ${opponentHighestReached}m`);
+            } else {
+                endGame('DRAW', `Both reached ${highestReached}m`);
+            }
+            return;
+        }
+        
+        // Update highest reached
+        const currentHeight = Math.round(Math.abs(localPlayer.y - (CANVAS_HEIGHT - 60)));
+        if (currentHeight > highestReached) {
+            highestReached = currentHeight;
+        }
+        
+        // Update UI
+        document.getElementById('your-height').innerText = `${highestReached}m`;
+        document.getElementById('opp-height').innerText = `${opponentHighestReached}m`;
+        document.getElementById('opp-height').style.color = opponentHighestReached > highestReached ? '#f56565' : '#48bb78';
+
+        if (localPlayer.grounded && !localPlayer.finished) {
+            if (keys.Space) {
+                localPlayer.charging = true;
+                if (localPlayer.charge < MAX_CHARGE) localPlayer.charge += 1.5;
+            } else if (localPlayer.charging) {
+                localPlayer.charging = false;
+                localPlayer.grounded = false;
+                
+                const power = localPlayer.charge / 7; 
+                localPlayer.vy = -power; 
+                
+                if (keys.KeyA || keys.ArrowLeft) localPlayer.vx = -2.5;
+                else if (keys.KeyD || keys.ArrowRight) localPlayer.vx = 2.5;
+                else localPlayer.vx = 0;
+
+                localPlayer.charge = 0;
+            } else {
+                if (keys.KeyA || keys.ArrowLeft) {
+                    localPlayer.vx = -3;
+                    localPlayer.facingRight = false;
+                }
+                else if (keys.KeyD || keys.ArrowRight) {
+                    localPlayer.vx = 3;
+                    localPlayer.facingRight = true;
+                }
+                else localPlayer.vx = 0;
+            }
+        } 
+
+        localPlayer.vy += GRAVITY;
+        
+        // Horizontal movement with collision
+        localPlayer.x += localPlayer.vx;
+        if (localPlayer.x < 0) { localPlayer.x = 0; localPlayer.vx *= -0.5; }
+        if (localPlayer.x + localPlayer.w > CANVAS_WIDTH) { localPlayer.x = CANVAS_WIDTH - localPlayer.w; localPlayer.vx *= -0.5; }
+        
+        // Check horizontal platform collision
+        if (!localPlayer.finished) {
+            for (let p of platforms) {
+                if (localPlayer.y + localPlayer.h > p.y && 
+                    localPlayer.y < p.y + p.h &&
+                    localPlayer.x + localPlayer.w > p.x && 
+                    localPlayer.x < p.x + p.w) {
+                    const prevX = localPlayer.x - localPlayer.vx;
+                    if (prevX + localPlayer.w <= p.x) {
+                        localPlayer.x = p.x - localPlayer.w;
+                        localPlayer.vx = 0;
+                    } else if (prevX >= p.x + p.w) {
+                        localPlayer.x = p.x + p.w;
+                        localPlayer.vx = 0;
+                    }
+                }
+            }
+        }
+
+        // Vertical movement with collision
+        localPlayer.y += localPlayer.vy;
+        localPlayer.grounded = false;
+        
+        if (checkRectCollide(localPlayer, goal)) {
+            localPlayer.finished = true;
+            localPlayer.vx = 0;
+            localPlayer.vy = 0;
+            if (connection) {
+                connection.send({ type: 'win' });
+            }
+            endGame('VICTORY', 'You reached the crown!');
+        }
+
+        if (!localPlayer.finished) {
+            for (let p of platforms) {
+                if (localPlayer.x + localPlayer.w > p.x && 
+                    localPlayer.x < p.x + p.w &&
+                    localPlayer.y + localPlayer.h > p.y && 
+                    localPlayer.y < p.y + p.h) {
+                    
+                    const prevY = localPlayer.y - localPlayer.vy;
+                    
+                    if (prevY + localPlayer.h <= p.y && localPlayer.vy > 0) {
+                        localPlayer.grounded = true;
+                        localPlayer.vy = 0;
+                        localPlayer.y = p.y - localPlayer.h;
+                        localPlayer.vx *= FRICTION;
+                    }
+                    else if (prevY >= p.y + p.h && localPlayer.vy < 0) {
+                        localPlayer.vy = 0;
+                        localPlayer.y = p.y + p.h;
+                    }
+                }
+            }
+        }
+
+        const targetCamY = -localPlayer.y + CANVAS_HEIGHT * 0.6;
+        cameraY = lerp(cameraY, targetCamY, 0.1);
+
+        syncPosition();
+        
+        const barFill = document.getElementById('charge-bar-fill');
+        barFill.style.width = `${localPlayer.charge}%`;
+    }
+
+    function draw() {
+        ctx.fillStyle = '#1a202c';
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        ctx.save();
+        ctx.translate(0, cameraY);
+
+        ctx.fillStyle = '#718096';
+        for (let p of platforms) {
+            ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.fillStyle = '#a0aec0';
+            ctx.fillRect(p.x, p.y, p.w, 4);
+            ctx.fillStyle = '#718096';
+        }
+
+        ctx.fillStyle = '#ecc94b';
+        ctx.beginPath();
+        ctx.moveTo(goal.x, goal.y + goal.h);
+        ctx.lineTo(goal.x, goal.y);
+        ctx.lineTo(goal.x + 10, goal.y + 15);
+        ctx.lineTo(goal.x + 20, goal.y);
+        ctx.lineTo(goal.x + 30, goal.y + 15);
+        ctx.lineTo(goal.x + 40, goal.y);
+        ctx.lineTo(goal.x + 40, goal.y + goal.h);
+        ctx.fill();
+
+        drawEntity(opponentPlayer);
+        drawEntity(localPlayer);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.font = '20px sans-serif';
+        for (let i = 0; i < LEVEL_HEIGHT; i+=500) {
+            ctx.fillText(`${i}m`, 10, -i + CANVAS_HEIGHT - 50);
+        }
+
+        ctx.restore();
+    }
+
+    function drawEntity(entity) {
+        if (entity.finished) {
+            ctx.save();
+            ctx.shadowColor = 'yellow';
+            ctx.shadowBlur = 20;
+        }
+
+        ctx.fillStyle = entity.color;
+        if (entity.charge > 0) {
+            const shake = Math.random() * 2 - 1;
+            ctx.fillRect(entity.x + shake, entity.y + (30 - (30*(1-entity.charge/200))), entity.w, entity.h * (1-entity.charge/200));
+        } else {
+            ctx.fillRect(entity.x, entity.y, entity.w, entity.h);
+        }
+        
+        ctx.fillStyle = 'white';
+        if (entity.facingRight) {
+            ctx.fillRect(entity.x + 20, entity.y + 5, 6, 6);
+        } else {
+            ctx.fillRect(entity.x + 4, entity.y + 5, 6, 6);
+        }
+
+        if (entity.finished) ctx.restore();
+    }
+
+    function gameLoop() {
+        if (gameState !== 'PLAYING') return;
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function lerp(start, end, amt) {
+        return (1 - amt) * start + amt * end;
+    }
+
+    function checkRectCollide(r1, r2) {
+        return (r1.x < r2.x + r2.w &&
+                r1.x + r1.w > r2.x &&
+                r1.y < r2.y + r2.h &&
+                r1.y + r1.h > r2.y);
+    }
+
+    function showLobbyWaitScreen() {
+        gameState = 'LOBBY';
+        hideOverlays();
+        document.getElementById('lobby-overlay').classList.remove('hidden');
+        draw(); 
+    }
+
+    function hideOverlays() {
+        document.querySelectorAll('.overlay').forEach(el => el.classList.add('hidden'));
+    }
+
+    function showError(msg) {
+        document.getElementById('error-msg').innerText = msg;
+        setTimeout(() => document.getElementById('error-msg').innerText = '', 3000);
+    }
+
+    function handleOpponentWin() {
+        if (gameState === 'ENDED') return;
+        endGame('DEFEAT', 'Opponent reached the crown!');
+    }
+
+    function endGame(title, subtitle) {
+        gameState = 'ENDED';
+        document.getElementById('result-title').innerText = title;
+        
+        if (title === 'VICTORY') {
+            document.getElementById('result-title').className = 'text-4xl mb-4 text-green-400';
+        } else if (title === 'DEFEAT') {
+            document.getElementById('result-title').className = 'text-4xl mb-4 text-red-400';
+        } else {
+            document.getElementById('result-title').className = 'text-4xl mb-4 text-yellow-400';
+        }
+        
+        document.getElementById('result-subtitle').innerText = subtitle;
+        document.getElementById('result-overlay').classList.remove('hidden');
+        document.getElementById('charge-bar-container').style.display = 'none';
+        document.getElementById('timer-hud').classList.add('hidden');
+    }
+
+    window.resetGame = () => {
+        if (connection) connection.close();
+        if (peer) peer.destroy();
+        location.reload(); 
+    };
+
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') keys.Space = true;
+        if (e.code === 'KeyA') keys.KeyA = true;
+        if (e.code === 'KeyD') keys.KeyD = true;
+        if (e.code === 'ArrowLeft') keys.ArrowLeft = true;
+        if (e.code === 'ArrowRight') keys.ArrowRight = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') keys.Space = false;
+        if (e.code === 'KeyA') keys.KeyA = false;
+        if (e.code === 'KeyD') keys.KeyD = false;
+        if (e.code === 'ArrowLeft') keys.ArrowLeft = false;
+        if (e.code === 'ArrowRight') keys.ArrowRight = false;
+    });
+
+    let touchStartX = 0;
+    window.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        keys.Space = true;
+    });
+    window.addEventListener('touchmove', (e) => {
+        const x = e.touches[0].clientX;
+        if (x < touchStartX - 30) { keys.KeyA = true; keys.KeyD = false; }
+        else if (x > touchStartX + 30) { keys.KeyD = true; keys.KeyA = false; }
+        else { keys.KeyA = false; keys.KeyD = false; }
+    });
+    window.addEventListener('touchend', () => {
+        keys.Space = false;
+        keys.KeyA = false;
+        keys.KeyD = false;
+    });
+
+</script>
+</body>
+</html>
